@@ -1,6 +1,6 @@
 # RAG FastAPI Server
 
-RAG API built with FastAPI + LangChain + OpenAI + ChromaDB.
+RAG API built with FastAPI + LangChain + OpenAI/Azure OpenAI + ChromaDB.
 
 ## Endpoints
 
@@ -24,7 +24,22 @@ Open docs at `http://127.0.0.1:8000/docs`.
 - Uploaded files are stored in `data/uploads/`.
 - Chroma persistence is stored in `data/chroma/`.
 - Optional env vars:
+  - `LLM_PROVIDER` (`openai` or `azure`, default: `openai`)
   - `OPENAI_CHAT_MODEL` (default: `gpt-4o-mini`)
   - `OPENAI_EMBEDDING_MODEL` (default: `text-embedding-3-small`)
+  - `AZURE_OPENAI_ENDPOINT`
+  - `AZURE_OPENAI_API_KEY`
+  - `AZURE_OPENAI_API_VERSION` (default: `2024-02-01`)
+  - `AZURE_OPENAI_CHAT_DEPLOYMENT`
+  - `AZURE_OPENAI_EMBEDDING_DEPLOYMENT`
   - `RAG_CHROMA_COLLECTION` (default: `rag_documents`)
   - `RAG_CHUNK_SIZE` and `RAG_CHUNK_OVERLAP`
+
+## Azure OpenAI Setup
+
+Set:
+- `LLM_PROVIDER=azure`
+- `AZURE_OPENAI_ENDPOINT=https://<resource>.openai.azure.com`
+- `AZURE_OPENAI_API_KEY=<key>`
+- `AZURE_OPENAI_CHAT_DEPLOYMENT=<your_chat_deployment_name>`
+- `AZURE_OPENAI_EMBEDDING_DEPLOYMENT=<your_embedding_deployment_name>`

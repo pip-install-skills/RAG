@@ -48,24 +48,46 @@ class RagService:
     def _get_llm(self):
         if self._llm is None:
             try:
-                from langchain_openai import ChatOpenAI
+                from langchain_openai import AzureChatOpenAI, ChatOpenAI
             except ImportError as exc:
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail="Missing dependency: langchain-openai.",
                 ) from exc
 
-            if not self.settings.openai_api_key:
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="OPENAI_API_KEY is not set.",
-                )
+            provider = self.settings.llm_provider
+            if provider == "azure":
+                if (
+                    not self.settings.azure_openai_endpoint
+                    or not self.settings.azure_openai_api_key
+                    or not self.settings.azure_openai_chat_deployment
+                ):
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail=(
+                            "Azure provider selected, but AZURE_OPENAI_ENDPOINT, "
+                            "AZURE_OPENAI_API_KEY, or AZURE_OPENAI_CHAT_DEPLOYMENT is missing."
+                        ),
+                    )
 
-            self._llm = ChatOpenAI(
-                model=self.settings.openai_chat_model,
-                api_key=self.settings.openai_api_key,
-                temperature=0.1,
-            )
+                self._llm = AzureChatOpenAI(
+                    azure_endpoint=self.settings.azure_openai_endpoint,
+                    api_key=self.settings.azure_openai_api_key,
+                    azure_deployment=self.settings.azure_openai_chat_deployment,
+                    api_version=self.settings.azure_openai_api_version
+                )
+            else:
+                if not self.settings.openai_api_key:
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail="OPENAI_API_KEY is not set.",
+                    )
+
+                self._llm = ChatOpenAI(
+                    model=self.settings.openai_chat_model,
+                    api_key=self.settings.openai_api_key,
+                    temperature=0.1,
+                )
         return self._llm
 
     def _generate_answer(self, query: str, context: str) -> str:
