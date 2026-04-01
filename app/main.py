@@ -3,9 +3,11 @@ from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.middleware.logging_middleware import LoggingMiddleware
+from app.routes.health import router as health_router
+from app.routes.rag import router as rag_router
 
 app = FastAPI(
-    title="Template",
+    title="RAG FastAPI Server",
     swagger_ui_parameters={"syntaxHighlight": False}
     )
 
@@ -17,6 +19,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.add_middleware(LoggingMiddleware)
+app.include_router(health_router)
+app.include_router(rag_router)
 
 @app.get("/")
 async def root():

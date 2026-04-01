@@ -1,29 +1,66 @@
 
-from fastapi import FastAPI, HTTPException, Security, status, Depends
-from fastapi.openapi.models import APIKey
-from fastapi.security import APIKeyHeader
+from __future__ import annotations
 
 import os
+from dataclasses import dataclass
+from pathlib import Path
 
-API_KEY = os.getenv('API_KEY', None)
+from dotenv import load_dotenv
 
-if not API_KEY:
-    raise ValueError("API_KEY environment variable is not set")
+load_dotenv()
 
-# Set up API key security dependency
-api_key_header = APIKeyHeader(name="X-API-KEY", auto_error=True)
 
-async def get_api_key(api_key_header: str = Security(api_key_header)):
-    if api_key_header == API_KEY:
-        return api_key_header
-    raise HTTPException(
-        status_code=status.HTTP_403_FORBIDDEN, detail="Could not validate X-API-KEY"
+@dataclass(frozen=True)
+class Settings:
+    base_dir: Path
+    data_dir: Path
+    uploads_dir: Path
+    vector_db_dir: Path
+    chroma_collection: str
+    chunk_size: int
+    chunk_overlap: int
+    default_top_k: int
+    max_upload_size_mb: int
+    openai_api_key: str | None
+    openai_embedding_model: str
+    openai_chat_model: str
+    allowed_extensions: tuple[str, ...]
+
+
+def get_settings() -> Settings:
+    base_dir = Path(__file__).resolve().parents[2]
+    data_dir = base_dir / "data"
+    uploads_dir = data_dir / "uploads"
+    vector_db_dir = data_dir / "chroma"
+    chunk_size = int(os.getenv("RAG_CHUNK_SIZE", "800"))
+    chunk_overlap = int(os.getenv("RAG_CHUNK_OVERLAP", "120"))
+    default_top_k = int(os.getenv("RAG_DEFAULT_TOP_K", "3"))
+    max_upload_size_mb = int(os.getenv("RAG_MAX_UPLOAD_MB", "10"))
+    openai_api_key = os.getenv("OPENAI_API_KEY")
+    openai_embedding_model = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
+    openai_chat_model = os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini")
+    chroma_collection = os.getenv("RAG_CHROMA_COLLECTION", "rag_documents")
+
+    settings = Settings(
+        base_dir=base_dir,
+        data_dir=data_dir,
+        uploads_dir=uploads_dir,
+        vector_db_dir=vector_db_dir,
+        chroma_collection=chroma_collection,
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+        default_top_k=default_top_k,
+        max_upload_size_mb=max_upload_size_mb,
+        openai_api_key=openai_api_key,
+        openai_embedding_model=openai_embedding_model,
+        openai_chat_model=openai_chat_model,
+        allowed_extensions=(".txt", ".md", ".pdf"),
     )
+    ensure_directories(settings)
+    return settings
 
-# Usage
 
-app = FastAPI()
-
-@app.get("/api_key_demo")
-async def process_document(api_key: APIKey = Depends(get_api_key)):
-    return {"message": "Hello World"}
+def ensure_directories(settings: Settings) -> None:
+    settings.data_dir.mkdir(parents=True, exist_ok=True)
+    settings.uploads_dir.mkdir(parents=True, exist_ok=True)
+    settings.vector_db_dir.mkdir(parents=True, exist_ok=True)
