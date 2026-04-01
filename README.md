@@ -1,12 +1,12 @@
-# RAG FastAPI Server
+# Agentic RAG FastAPI Server
 
-RAG API built with FastAPI + LangChain + OpenAI/Azure OpenAI + ChromaDB.
+Agentic RAG API built with FastAPI + LangChain Agent Framework + OpenAI/Azure OpenAI + ChromaDB.
 
 ## Endpoints
 
 - `GET /health` - service health check
 - `POST /api/v1/rag/upload` - upload `.txt`, `.md`, or `.pdf` and index in Chroma
-- `POST /api/v1/rag/query` - retrieve relevant chunks from Chroma and answer with OpenAI LLM
+- `POST /api/v1/rag/query` - agentic RAG query over local indexed documents
 - `GET /api/v1/rag/documents` - list indexed documents (aggregated from chunk metadata)
 
 ## Run
@@ -34,6 +34,7 @@ Open docs at `http://127.0.0.1:8000/docs`.
   - `AZURE_OPENAI_EMBEDDING_DEPLOYMENT`
   - `RAG_CHROMA_COLLECTION` (default: `rag_documents`)
   - `RAG_CHUNK_SIZE` and `RAG_CHUNK_OVERLAP`
+  - `RAG_AGENT_RECURSION_LIMIT` (default: `20`)
 
 ## Azure OpenAI Setup
 

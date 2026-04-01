@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import HTTPException, status
 
 from app.classes.store import VectorStoreManager
@@ -13,37 +15,74 @@ class RagService:
         self._llm = None
 
     def answer_query(self, query: str, top_k: int) -> dict:
-        raw_results = self.store.hybrid_search(query=query, top_k=top_k)
-        sources = []
-        context_parts = []
+        try:
+            from langchain.agents import create_agent
+            from langchain_core.messages import HumanMessage
+            from langchain_core.tools import tool
+        except ImportError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Missing dependencies: langchain and langchain-core.",
+            ) from exc
 
-        for document, score in raw_results:
-            metadata = document.metadata or {}
-            chunk_id = str(metadata.get("chunk_id", "unknown"))
-            document_id = str(metadata.get("document_id", "unknown"))
-            filename = str(metadata.get("filename", "unknown"))
-            text = document.page_content
-            sources.append(
-                {
-                    "chunk_id": chunk_id,
-                    "document_id": document_id,
-                    "filename": filename,
-                    "score": float(score),
-                    "text": text,
-                }
+        local_sources: list[dict[str, Any]] = []
+
+        @tool("search_local_knowledge_base")
+        def search_local_knowledge_base(search_query: str) -> str:
+            """Search uploaded local documents."""
+            raw_results = self.store.hybrid_search(query=search_query, top_k=top_k)
+            if not raw_results:
+                return "No relevant local documents were found."
+
+            formatted_blocks: list[str] = []
+            for rank, (document, score) in enumerate(raw_results, start=1):
+                metadata = document.metadata or {}
+                chunk_id = str(metadata.get("chunk_id", "unknown"))
+                document_id = str(metadata.get("document_id", "unknown"))
+                filename = str(metadata.get("filename", "unknown"))
+                text = document.page_content
+
+                local_sources.append(
+                    {
+                        "chunk_id": chunk_id,
+                        "document_id": document_id,
+                        "filename": filename,
+                        "score": float(score),
+                        "text": text,
+                    }
+                )
+                formatted_blocks.append(
+                    f"[local:{rank} | chunk_id={chunk_id} | file={filename}]\n{text}"
+                )
+            return "\n\n".join(formatted_blocks)
+
+        llm = self._get_llm()
+        agent = create_agent(
+            model=llm,
+            tools=[search_local_knowledge_base],
+            system_prompt = (
+                "You are an agentic RAG assistant.\n"
+                "1) First, try to answer the user's query using your own knowledge.\n"
+                "2) If you are not confident OR the query requires specific, up-to-date, or domain-specific data, call `search_local_knowledge_base`.\n"
+                "3) Use the retrieved context to generate the final answer.\n"
+                "4) If the retrieved context is insufficient, clearly say that you could not find enough information in the local knowledge base.\n"
+                "5) Do not hallucinate or fabricate information."
             )
-            context_parts.append(
-                f"[{chunk_id} | {filename}]\n{text}"
+        )
+
+        try:
+            response = agent.invoke(
+                {"messages": [HumanMessage(content=query)]},
+                config={"recursion_limit": self.settings.rag_agent_recursion_limit},
             )
+            answer = self._extract_agent_answer(response)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Agent execution failed: {exc}",
+            ) from exc
 
-        if not sources:
-            return {
-                "answer": "I could not find relevant context in the indexed documents.",
-                "sources": [],
-            }
-
-        answer = self._generate_answer(query=query, context="\n\n".join(context_parts))
-        return {"answer": answer, "sources": sources}
+        return {"answer": answer, "sources": self._dedupe_sources(local_sources)}
 
     def _get_llm(self):
         if self._llm is None:
@@ -70,11 +109,18 @@ class RagService:
                         ),
                     )
 
+                deployment_name = str(self.settings.azure_openai_chat_deployment or "")
+                # Some Azure GPT-5 deployments reject temperature and stricter tool args.
+                azure_kwargs: dict[str, Any] = {}
+                if "gpt-5" not in deployment_name.lower():
+                    azure_kwargs["temperature"] = 0.1
+
                 self._llm = AzureChatOpenAI(
                     azure_endpoint=self.settings.azure_openai_endpoint,
                     api_key=self.settings.azure_openai_api_key,
                     azure_deployment=self.settings.azure_openai_chat_deployment,
-                    api_version=self.settings.azure_openai_api_version
+                    api_version=self.settings.azure_openai_api_version,
+                    **azure_kwargs,
                 )
             else:
                 if not self.settings.openai_api_key:
@@ -90,30 +136,33 @@ class RagService:
                 )
         return self._llm
 
-    def _generate_answer(self, query: str, context: str) -> str:
-        try:
-            from langchain_core.messages import HumanMessage, SystemMessage
-        except ImportError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Missing dependency: langchain-core.",
-            ) from exc
+    def _extract_agent_answer(self, response: Any) -> str:
+        if isinstance(response, str):
+            return response
+        if isinstance(response, dict):
+            output = response.get("output")
+            if isinstance(output, str) and output.strip():
+                return output
 
-        llm = self._get_llm()
-        messages = [
-            SystemMessage(
-                content=(
-                    "You are a helpful RAG assistant. Answer the user query only from the provided context. "
-                    "If the context is insufficient, clearly say so."
-                )
-            ),
-            HumanMessage(
-                content=(
-                    f"User query:\n{query}\n\n"
-                    f"Retrieved context:\n{context}\n\n"
-                    "Provide a concise answer and mention uncertainty if needed."
-                )
-            ),
-        ]
-        response = llm.invoke(messages)
-        return response.content if isinstance(response.content, str) else str(response.content)
+            messages = response.get("messages")
+            if isinstance(messages, list) and messages:
+                final_message = messages[-1]
+                content = getattr(final_message, "content", "")
+                if isinstance(content, str):
+                    return content
+                if isinstance(content, list):
+                    text_parts = [part.get("text", "") for part in content if isinstance(part, dict)]
+                    if text_parts:
+                        return "\n".join([part for part in text_parts if part])
+        return str(response)
+
+    def _dedupe_sources(self, sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        merged: list[dict[str, Any]] = []
+        seen: set[tuple[str, str]] = set()
+        for source in sources:
+            key = (str(source.get("document_id", "")), str(source.get("chunk_id", "")))
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(source)
+        return merged

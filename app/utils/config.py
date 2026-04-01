@@ -30,6 +30,7 @@ class Settings:
     azure_openai_api_key: str | None
     azure_openai_embedding_deployment: str | None
     azure_openai_chat_deployment: str | None
+    rag_agent_recursion_limit: int
     allowed_extensions: tuple[str, ...]
 
 
@@ -51,6 +52,7 @@ def get_settings() -> Settings:
     azure_openai_api_key = os.getenv("AZURE_OPENAI_API_KEY") or openai_api_key
     azure_openai_embedding_deployment = os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT")
     azure_openai_chat_deployment = os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT")
+    rag_agent_recursion_limit = int(os.getenv("RAG_AGENT_RECURSION_LIMIT", "20"))
     chroma_collection = os.getenv("RAG_CHROMA_COLLECTION", "rag_documents")
 
     settings = Settings(
@@ -72,6 +74,7 @@ def get_settings() -> Settings:
         azure_openai_api_key=azure_openai_api_key,
         azure_openai_embedding_deployment=azure_openai_embedding_deployment,
         azure_openai_chat_deployment=azure_openai_chat_deployment,
+        rag_agent_recursion_limit=rag_agent_recursion_limit,
         allowed_extensions=(".txt", ".md", ".pdf"),
     )
     ensure_directories(settings)
