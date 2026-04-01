@@ -9,6 +9,7 @@ class VectorStoreManager:
     def __init__(self) -> None:
         self.settings = get_settings()
         self._vector_store = None
+        self._bm25_retriever = None
 
     def _build_vector_store(self):
         try:
@@ -58,16 +59,49 @@ class VectorStoreManager:
             persist_directory=str(self.settings.vector_db_dir),
         )
 
+    def _build_bm25_retriever(self):
+        """Builds a local BM25 index using the documents currently in Chroma."""
+        try:
+            from langchain_community.retrievers import BM25Retriever
+            from langchain_core.documents import Document
+        except ImportError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Missing dependencies for hybrid search. Install langchain-community and rank_bm25.",
+            ) from exc
+
+        # Retrieve all currently indexed documents from Chroma to build the sparse index
+        records = self.vector_store.get(include=["documents", "metadatas"])
+        documents = records.get("documents") or []
+        metadatas = records.get("metadatas") or []
+
+        if not documents:
+            return None
+
+        # Reconstruct Document objects for the BM25 Retriever
+        docs = [Document(page_content=d, metadata=m) for d, m in zip(documents, metadatas)]
+        return BM25Retriever.from_documents(docs)
+
     @property
     def vector_store(self):
         if self._vector_store is None:
             self._vector_store = self._build_vector_store()
         return self._vector_store
 
+    @property
+    def bm25_retriever(self):
+        # Lazy load the BM25 retriever
+        if self._bm25_retriever is None:
+            self._bm25_retriever = self._build_bm25_retriever()
+        return self._bm25_retriever
+
     def add_documents(self, texts: list[str], metadatas: list[dict], ids: list[str]) -> None:
         self.vector_store.add_texts(texts=texts, metadatas=metadatas, ids=ids)
+        # Reset the BM25 retriever so it rebuilds with the newly added documents on next search
+        self._bm25_retriever = None
 
     def similarity_search_with_scores(self, query: str, top_k: int):
+        """Original semantic-only search."""
         try:
             return self.vector_store.similarity_search_with_relevance_scores(
                 query=query,
@@ -75,6 +109,66 @@ class VectorStoreManager:
             )
         except Exception:
             return []
+
+    def hybrid_search(self, query: str, top_k: int):
+        """
+        Combines Dense (Vector) and Sparse (BM25) retrieval using Reciprocal Rank Fusion (RRF).
+        Returns a list of tuples: (Document, fusion_score)
+        """
+        try:
+            from langchain_core.documents import Document
+        except ImportError:
+            return []
+
+        # We fetch extra documents (top_k * 2) from both retrievers to allow for better cross-fusion
+        fetch_k = top_k * 2
+
+        # 1. Semantic Vector Search
+        try:
+            vector_results = self.vector_store.similarity_search_with_relevance_scores(
+                query=query, k=fetch_k
+            )
+        except Exception:
+            vector_results = []
+
+        # 2. Sparse BM25 Keyword Search
+        bm25_results = []
+        retriever = self.bm25_retriever
+        if retriever is not None:
+            retriever.k = fetch_k
+            try:
+                bm25_results = retriever.invoke(query)
+            except Exception:
+                bm25_results = []
+
+        # 3. Reciprocal Rank Fusion (RRF) Application
+        # RRF formula: Score = 1 / (k + rank), where k is a smoothing constant (usually 60)
+        rrf_k = 60
+        fused_scores: dict[str, float] = {}
+        docs_dict: dict[str, Document] = {}
+
+        # Add vector ranks to fusion scores
+        for rank, (doc, _) in enumerate(vector_results):
+            # Use chunk_id if available, otherwise hash the content to deduplicate
+            doc_id = str(doc.metadata.get("chunk_id", hash(doc.page_content)))
+            docs_dict[doc_id] = doc
+            fused_scores[doc_id] = fused_scores.get(doc_id, 0.0) + 1.0 / (rrf_k + rank + 1)
+
+        # Add BM25 ranks to fusion scores
+        for rank, doc in enumerate(bm25_results):
+            doc_id = str(doc.metadata.get("chunk_id", hash(doc.page_content)))
+            docs_dict[doc_id] = doc
+            fused_scores[doc_id] = fused_scores.get(doc_id, 0.0) + 1.0 / (rrf_k + rank + 1)
+
+        # 4. Sort documents by their combined RRF score
+        reranked_results = sorted(
+            [(docs_dict[doc_id], score) for doc_id, score in fused_scores.items()],
+            key=lambda item: item[1],
+            reverse=True
+        )
+
+        # Return only the requested top_k results
+        return reranked_results[:top_k]
 
     def load_indexed_documents(self) -> list[dict]:
         records = self.vector_store.get(include=["metadatas"])

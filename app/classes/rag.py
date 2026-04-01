@@ -13,7 +13,7 @@ class RagService:
         self._llm = None
 
     def answer_query(self, query: str, top_k: int) -> dict:
-        raw_results = self.store.similarity_search_with_scores(query=query, top_k=top_k)
+        raw_results = self.store.hybrid_search(query=query, top_k=top_k)
         sources = []
         context_parts = []
 
