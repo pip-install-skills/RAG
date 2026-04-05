@@ -4,6 +4,7 @@ from typing import Any
 
 from fastapi import HTTPException, status
 
+from app.classes.reranker import RerankerService
 from app.classes.store import VectorStoreManager
 from app.utils.config import get_settings
 
@@ -12,6 +13,7 @@ class RagService:
     def __init__(self, store: VectorStoreManager | None = None) -> None:
         self.settings = get_settings()
         self.store = store or VectorStoreManager()
+        self.reranker = RerankerService()
         self._llm = None
 
     def answer_query(self, query: str, top_k: int) -> dict:
@@ -30,29 +32,31 @@ class RagService:
         @tool("search_local_knowledge_base")
         def search_local_knowledge_base(search_query: str) -> str:
             """Search uploaded local documents."""
-            raw_results = self.store.hybrid_search(query=search_query, top_k=top_k)
+            retrieval_k = max(top_k, self.settings.rag_rerank_candidate_count)
+            raw_results = self.store.hybrid_search(query=search_query, top_k=retrieval_k)
             if not raw_results:
                 return "No relevant local documents were found."
 
-            formatted_blocks: list[str] = []
-            for rank, (document, score) in enumerate(raw_results, start=1):
+            candidates: list[dict[str, Any]] = []
+            for document, score in raw_results:
                 metadata = document.metadata or {}
-                chunk_id = str(metadata.get("chunk_id", "unknown"))
-                document_id = str(metadata.get("document_id", "unknown"))
-                filename = str(metadata.get("filename", "unknown"))
-                text = document.page_content
-
-                local_sources.append(
+                candidates.append(
                     {
-                        "chunk_id": chunk_id,
-                        "document_id": document_id,
-                        "filename": filename,
+                        "chunk_id": str(metadata.get("chunk_id", "unknown")),
+                        "document_id": str(metadata.get("document_id", "unknown")),
+                        "filename": str(metadata.get("filename", "unknown")),
                         "score": float(score),
-                        "text": text,
+                        "text": document.page_content,
                     }
                 )
+
+            reranked = self.reranker.rerank(query=search_query, candidates=candidates, top_k=top_k)
+            local_sources.extend(reranked)
+
+            formatted_blocks: list[str] = []
+            for rank, row in enumerate(reranked, start=1):
                 formatted_blocks.append(
-                    f"[local:{rank} | chunk_id={chunk_id} | file={filename}]\n{text}"
+                    f"[local:{rank} | chunk_id={row['chunk_id']} | file={row['filename']}]\n{row['text']}"
                 )
             return "\n\n".join(formatted_blocks)
 

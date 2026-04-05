@@ -31,6 +31,13 @@ class Settings:
     azure_openai_embedding_deployment: str | None
     azure_openai_chat_deployment: str | None
     rag_agent_recursion_limit: int
+    rag_reranker_provider: str
+    rag_rerank_candidate_count: int
+    cohere_api_key: str | None
+    cohere_rerank_model: str
+    azure_cohere_rerank_api_key: str | None
+    azure_cohere_rerank_base_url: str | None
+    azure_cohere_rerank_model: str | None
     allowed_extensions: tuple[str, ...]
 
 
@@ -53,6 +60,13 @@ def get_settings() -> Settings:
     azure_openai_embedding_deployment = os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT")
     azure_openai_chat_deployment = os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT")
     rag_agent_recursion_limit = int(os.getenv("RAG_AGENT_RECURSION_LIMIT", "20"))
+    rag_reranker_provider = os.getenv("RAG_RERANKER_PROVIDER", "none").lower()
+    rag_rerank_candidate_count = int(os.getenv("RAG_RERANK_CANDIDATE_COUNT", "20"))
+    cohere_api_key = os.getenv("COHERE_API_KEY")
+    cohere_rerank_model = os.getenv("COHERE_RERANK_MODEL", "rerank-v4.0")
+    azure_cohere_rerank_api_key = os.getenv("AZURE_COHERE_RERANK_API_KEY")
+    azure_cohere_rerank_base_url = os.getenv("AZURE_COHERE_RERANK_BASE_URL")
+    azure_cohere_rerank_model = os.getenv("AZURE_COHERE_RERANK_MODEL")
     chroma_collection = os.getenv("RAG_CHROMA_COLLECTION", "rag_documents")
 
     settings = Settings(
@@ -75,6 +89,13 @@ def get_settings() -> Settings:
         azure_openai_embedding_deployment=azure_openai_embedding_deployment,
         azure_openai_chat_deployment=azure_openai_chat_deployment,
         rag_agent_recursion_limit=rag_agent_recursion_limit,
+        rag_reranker_provider=rag_reranker_provider,
+        rag_rerank_candidate_count=rag_rerank_candidate_count,
+        cohere_api_key=cohere_api_key,
+        cohere_rerank_model=cohere_rerank_model,
+        azure_cohere_rerank_api_key=azure_cohere_rerank_api_key,
+        azure_cohere_rerank_base_url=azure_cohere_rerank_base_url,
+        azure_cohere_rerank_model=azure_cohere_rerank_model,
         allowed_extensions=(".txt", ".md", ".pdf"),
     )
     ensure_directories(settings)
